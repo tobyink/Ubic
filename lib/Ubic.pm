@@ -52,7 +52,8 @@ use IO::Handle;
 use Storable qw(freeze thaw);
 use Try::Tiny;
 use Scalar::Util qw(blessed);
-use Params::Validate qw(:all);
+use Type::Params qw(compile);
+use Types::Standard qw( slurpy Dict Optional Str StrMatch );
 
 use Ubic::Result qw(result);
 use Ubic::Multiservice::Dir;
@@ -66,11 +67,13 @@ use Ubic::Settings;
 our $SINGLETON;
 
 my $service_name_re = qr{^[\w-]+(?:\.[\w-]+)*$};
-my $validate_service = { type => SCALAR, regex => $service_name_re };
+my $validate_service = StrMatch[ $service_name_re ];
 
 # singleton constructor
+my $_V_obj;
 sub _obj {
-    my ($param) = validate_pos(@_, 1);
+    ;
+    my ($param) = ($_V_obj ||= compile(1))->(@_);
     if (blessed($param)) {
         return $param;
     }
@@ -107,12 +110,13 @@ Dir into which ubic stores all of its data (locks, status files, tmp files).
 =back
 
 =cut
+my ($_Vnew_dict, $_Vnew_1, $_Vnew_2);
 sub new {
     my $class = shift;
-    my $options = validate(@_, {
-        service_dir =>  { type => SCALAR, optional => 1 },
-        data_dir => { type => SCALAR, optional => 1 },
-    });
+    $_Vnew_dict ||= Dict[service_dir => Optional[Str], data_dir => Optional[Str]];
+    $_Vnew_1    ||= compile($_Vnew_dict);
+    $_Vnew_2    ||= compile(slurpy $_Vnew_dict);
+    my ($options) = (ref($_[0]) eq 'HASH' ? $_Vnew_1 : $_Vnew_2)->(@_);
 
     if (caller ne 'Ubic') {
         warn "Using Ubic->new constructor is discouraged. Just call methods as class methods.";
@@ -153,9 +157,10 @@ These methods return the result objects, i.e., instances of the C<Ubic::Result::
 Start the service.
 
 =cut
+my $_Wservice;
 sub start($$) {
     my $self = _obj(shift);
-    my ($name) = validate_pos(@_, $validate_service);
+    my ($name) = ($_Wservice ||= compile($validate_service))->(@_);
     my $lock = $self->lock($name);
 
     $self->enable($name);
@@ -171,7 +176,7 @@ Stop the service.
 =cut
 sub stop($$) {
     my $self = _obj(shift);
-    my ($name) = validate_pos(@_, $validate_service);
+    my ($name) = ($_Wservice ||= compile($validate_service))->(@_);
     my $lock = $self->lock($name);
 
     $self->disable($name);
@@ -191,7 +196,7 @@ Restart the service; start it if it's not running.
 =cut
 sub restart($$) {
     my $self = _obj(shift);
-    my ($name) = validate_pos(@_, $validate_service);
+    my ($name) = ($_Wservice ||= compile($validate_service))->(@_);
     my $lock = $self->lock($name);
 
     $self->enable($name);
@@ -209,7 +214,7 @@ Restart the service if it is enabled.
 =cut
 sub try_restart($$) {
     my $self = _obj(shift);
-    my ($name) = validate_pos(@_, $validate_service);
+    my ($name) = ($_Wservice ||= compile($validate_service))->(@_);
     my $lock = $self->lock($name);
 
     unless ($self->is_enabled($name)) {
@@ -229,7 +234,7 @@ This method will do reloading if the service implements C<reload()>; it will thr
 =cut
 sub reload($$) {
     my $self = _obj(shift);
-    my ($name) = validate_pos(@_, $validate_service);
+    my ($name) = ($_Wservice ||= compile($validate_service))->(@_);
     my $lock = $self->lock($name);
 
     unless ($self->is_enabled($name)) {
@@ -254,7 +259,7 @@ Does nothing if service is disabled.
 =cut
 sub force_reload($$) {
     my $self = _obj(shift);
-    my ($name) = validate_pos(@_, $validate_service);
+    my ($name) = ($_Wservice ||= compile($validate_service))->(@_);
     my $lock = $self->lock($name);
 
     unless ($self->is_enabled($name)) {
@@ -274,7 +279,7 @@ Get the service status.
 =cut
 sub status($$) {
     my $self = _obj(shift);
-    my ($name) = validate_pos(@_, $validate_service);
+    my ($name) = ($_Wservice ||= compile($validate_service))->(@_);
     my $lock = $self->lock($name);
 
     return $self->do_cmd($name, 'status');
@@ -297,7 +302,7 @@ Watchdog will periodically check its status, attempt to restart it and mark it a
 =cut
 sub enable($$) {
     my $self = _obj(shift);
-    my ($name) = validate_pos(@_, $validate_service);
+    my ($name) = ($_Wservice ||= compile($validate_service))->(@_);
     my $lock = $self->lock($name);
     my $guard = $self->access_guard($name);
 
@@ -317,7 +322,7 @@ Returns true or false.
 =cut
 sub is_enabled($$) {
     my $self = _obj(shift);
-    my ($name) = validate_pos(@_, $validate_service);
+    my ($name) = ($_Wservice ||= compile($validate_service))->(@_);
 
     die "Service '$name' not found" unless $self->root_service->has_service($name);
     unless (-e $self->status_file($name)) {
@@ -342,7 +347,7 @@ Its state will no longer be checked by the watchdog, and C<ubic status> will rep
 =cut
 sub disable($$) {
     my $self = _obj(shift);
-    my ($name) = validate_pos(@_, $validate_service);
+    my ($name) = ($_Wservice ||= compile($validate_service))->(@_);
     my $lock = $self->lock($name);
     my $guard = $self->access_guard($name);
 
@@ -362,7 +367,7 @@ Unlike other methods, it can be invoked by any user.
 =cut
 sub cached_status($$) {
     my ($self) = _obj(shift);
-    my ($name) = validate_pos(@_, $validate_service);
+    my ($name) = ($_Wservice ||= compile($validate_service))->(@_);
 
     my $type;
     if (not $self->is_enabled($name)) {
@@ -381,9 +386,10 @@ sub cached_status($$) {
 Execute the custom command C<$command> for the given service.
 
 =cut
+my $_Vdo_custom_command;
 sub do_custom_command($$) {
     my ($self) = _obj(shift);
-    my ($name, $command) = validate_pos(@_, $validate_service, 1);
+    my ($name, $command) = ($_Vdo_custom_command ||= compile($validate_service, 1))->(@_);
 
     # TODO - do all custom commands require locks?
     # they can be distinguished in future by some custom_commands_ext method which will provide hash { command => properties }, i think...
@@ -402,7 +408,7 @@ Get service object by name.
 =cut
 sub service($$) {
     my $self = _obj(shift);
-    my ($name) = validate_pos(@_, $validate_service);
+    my ($name) = ($_Wservice ||= compile($validate_service))->(@_);
     # this guarantees that : will be unambiguous separator in status filename (what??)
     unless ($self->{service_cache}{$name}) {
         # Service construction is a memory-leaking operation (because of package name randomization in Ubic::Multiservice::Dir),
@@ -419,7 +425,7 @@ Check whether the service named C<$name> exists.
 =cut
 sub has_service($$) {
     my $self = _obj(shift);
-    my ($name) = validate_pos(@_, $validate_service);
+    my ($name) = ($_Wservice ||= compile($validate_service))->(@_);
     # TODO - it would be safer to do this check without actual service construction
     # but it would require cron-based script which maintains list of all services
     return $self->root_service->has_service($name);
@@ -502,9 +508,10 @@ sub compl_services($$) {
 Write the new status into the service's status file.
 
 =cut
+my $_Vset_cached_status;
 sub set_cached_status($$$) {
     my $self = _obj(shift);
-    my ($name, $status) = validate_pos(@_, $validate_service, 1);
+    my ($name, $status) = ($_Vset_cached_status ||= compile($validate_service, 1))->(@_);
     my $guard = $self->access_guard($name);
 
     if (blessed $status) {
@@ -528,9 +535,10 @@ sub set_cached_status($$$) {
 Get the data dir.
 
 =cut
+my $_Vget_data_dir;
 sub get_data_dir($) {
     my $self = _obj(shift);
-    validate_pos(@_);
+    ($_Vget_data_dir ||= compile())->(@_);
     return $self->{data_dir};
 }
 
@@ -548,8 +556,9 @@ This setting will be propagated into subprocesses using environment, so the foll
     system('ubic stop some_service');
 
 =cut
+my $_Vset_data_dir;
 sub set_data_dir($$) {
-    my ($arg, $dir) = validate_pos(@_, 1, 1);
+    my ($arg, $dir) = ($_Vset_data_dir ||= compile(1, 1))->(@_);
 
     my $md = sub {
         my $new_dir = shift;
@@ -588,8 +597,9 @@ Set default user for all services.
 This is a simple proxy for C<< Ubic::Settings->default_user($user) >>.
 
 =cut
+my $_Vset_default_user;
 sub set_default_user($$) {
-    my ($arg, $user) = validate_pos(@_, 1, 1);
+    my ($arg, $user) = ($_Vset_default_user ||= compile(1, 1))->(@_);
 
     Ubic::Settings->default_user($user);
 }
@@ -599,9 +609,10 @@ sub set_default_user($$) {
 Get the ubic services dir.
 
 =cut
+my $_Vget_service_dir;
 sub get_service_dir($) {
     my $self = _obj(shift);
-    validate_pos(@_);
+    ($_Vget_service_dir ||= compile())->(@_);
     return $self->{service_dir};
 }
 
@@ -610,8 +621,9 @@ sub get_service_dir($) {
 Set the ubic services dir.
 
 =cut
+my $_Vset_service_dir;
 sub set_service_dir($$) {
-    my ($arg, $dir) = validate_pos(@_, 1, 1);
+    my ($arg, $dir) = ($_Vset_service_dir ||= compile(1, 1))->(@_);
     Ubic::Settings->service_dir($dir);
     if ($SINGLETON) {
         $SINGLETON->{service_dir} = $dir;
@@ -636,7 +648,7 @@ Get the status file name by a service's name.
 =cut
 sub status_file($$) {
     my $self = _obj(shift);
-    my ($name) = validate_pos(@_, $validate_service);
+    my ($name) = ($_Wservice ||= compile($validate_service))->(@_);
     return "$self->{status_dir}/".$name;
 }
 
@@ -649,7 +661,7 @@ It's a bad idea to call this from any other class than C<Ubic>, but if you'll ev
 =cut
 sub status_obj($$) {
     my $self = _obj(shift);
-    my ($name) = validate_pos(@_, $validate_service);
+    my ($name) = ($_Wservice ||= compile($validate_service))->(@_);
     return Ubic::Persistent->new($self->status_file($name));
 }
 
@@ -660,7 +672,7 @@ Get the readonly, nonlocked status persistent object (see L<Ubic::Persistent>) b
 =cut
 sub status_obj_ro($$) {
     my $self = _obj(shift);
-    my ($name) = validate_pos(@_, $validate_service);
+    my ($name) = ($_Wservice ||= compile($validate_service))->(@_);
     return Ubic::Persistent->load($self->status_file($name));
 }
 
@@ -671,7 +683,7 @@ Get an access guard (L<Ubic::AccessGuard> object) for the given service.
 =cut
 sub access_guard($$) {
     my $self = _obj(shift);
-    my ($name) = validate_pos(@_, $validate_service);
+    my ($name) = ($_Wservice ||= compile($validate_service))->(@_);
     return Ubic::AccessGuard->new(
         Ubic::Credentials->new(service => $self->service($name))
     );
@@ -686,7 +698,7 @@ You can lock one object twice from the same process, but not from different proc
 =cut
 sub lock($$) {
     my ($self) = _obj(shift);
-    my ($name) = validate_pos(@_, $validate_service);
+    my ($name) = ($_Wservice ||= compile($validate_service))->(@_);
 
     my $lock = do {
         my $guard = $self->access_guard($name);
